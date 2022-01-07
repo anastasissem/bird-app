@@ -31,7 +31,6 @@ import java.lang.Exception
 import java.text.SimpleDateFormat
 import java.util.*
 
-
 private const val LOG_TAG = "AudioRecordTest"
 
 class HomeFragment : Fragment() {
@@ -45,7 +44,7 @@ class HomeFragment : Fragment() {
     private var player: MediaPlayer? = null
 
     private var timeWhenStopped: Long = 0
-    
+
     private var isRecording = false
     private var isPaused = false
 
@@ -128,6 +127,7 @@ class HomeFragment : Fragment() {
         recordButton.setOnClickListener {
             recordPermissionSetup()
             timer()
+
             /* Change bird icon between start/pause */
             if (isPaused) {
                 val icon = getDrawable(requireContext(), R.drawable.still_stork)
@@ -138,34 +138,82 @@ class HomeFragment : Fragment() {
             }
         }
 
-        val pauseButton: ImageButton = root.findViewById(R.id.pauseButton)
-        pauseButton.setOnClickListener {
-        }
-
-        /* PLAY */
+        /* PLAYER FUNCTION*/
         val playButton: ImageButton = root.findViewById(R.id.playButton)
         playButton.setOnClickListener  {
-            // move to save button
-            writePermissionSetup()
-            audioPlayer(requireContext().filesDir?.listFiles()?.get(0))
-        }
-
-        /* RESET / PASS THROUGH MODEL */
-        val analyzeButton: Button = root.findViewById(R.id.analyzeButton)
-        analyzeButton.setOnClickListener {
-            Log.d(LOG_TAG, "RESET")
-            /* reset meter after completing recording*/
-            finish()
-            Toast.makeText(requireContext(), "STOPPED", Toast.LENGTH_LONG).show()
-            meter.base = SystemClock.elapsedRealtime()
-            if(context?.filesDir?.listFiles()?.isNotEmpty() == true) {
-                Log.d(LOG_TAG, "Files:\n")
-                for (f in requireContext().filesDir?.listFiles()!!) {
-                    Log.d(LOG_TAG, f.absolutePath)
-                    //f.delete()
+            // Not interactive when recording is in progress
+            if ((!isRecording && !isPaused) || (isRecording && isPaused)) {
+                // move to save button
+                writePermissionSetup()
+                if (context?.filesDir?.listFiles()?.isEmpty() == true) {
+                    Toast.makeText(requireContext(), "Nothing to Play!", Toast.LENGTH_SHORT).show()
+                } else {
+                    releaseRecorder()
+                    player = MediaPlayer().apply {
+                        try {
+                            setDataSource(fileName.toString())
+                            prepare()
+                            start()
+                            //disable playback if already playing
+                            playButton.isEnabled = false
+                            Log.d(LOG_TAG, "PLAY ON")
+                            val icon = getDrawable(requireContext(), R.drawable.pause_black_small)
+                            playButton.setImageDrawable(icon)
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                        setOnCompletionListener {
+                            val icon = getDrawable(requireContext(), R.drawable.play_black_small)
+                            playButton.setImageDrawable(icon)
+                            reset()
+                            //enable playback for future clicks
+                            playButton.isEnabled = true
+                            Log.d(LOG_TAG, "PLAY END")
+                        }
+                    }
                 }
             }
-            else Log.d(LOG_TAG, "No Files.\n")
+        }
+
+        /* RESET & PREDICT */
+        val analyzeButton: Button = root.findViewById(R.id.analyzeButton)
+        analyzeButton.setOnClickListener {
+            // Not interactive when recording is in progress
+            if ((!isRecording && !isPaused) || (isRecording && isPaused)) {
+                if (context?.filesDir?.listFiles()?.isEmpty() == true) {
+                    Toast.makeText(requireContext(), "Nothing to Predict!", Toast.LENGTH_SHORT)
+                        .show()
+                } else {
+                    Log.d(LOG_TAG, "RESET")
+                    /* reset meter after completing recording*/
+                    finish()
+                    Toast.makeText(requireContext(), "STOPPED", Toast.LENGTH_LONG).show()
+                    meter.base = SystemClock.elapsedRealtime()
+                }
+            }
+        }
+
+        /* DISCARD & RESET */
+        val trashButton: ImageButton = root.findViewById((R.id.trashButton))
+        trashButton.setOnClickListener {
+            // Not interactive when recording is in progress
+            if ((!isRecording && !isPaused) || (isRecording && isPaused)) {
+                Log.d(LOG_TAG, "DISCARD")
+                finish()
+                meter.base = SystemClock.elapsedRealtime()
+                if (context?.filesDir?.listFiles()?.isNotEmpty() == true) {
+                    for (f in requireContext().filesDir?.listFiles()!!) {
+                        Log.d(LOG_TAG, f.absolutePath)
+                        f.delete()
+                        Toast.makeText(requireContext(), "Trash emptied!", Toast.LENGTH_SHORT)
+                            .show()
+                    }
+                } else {
+                    Log.d(LOG_TAG, "No Files.\n")
+                    Toast.makeText(requireContext(), "Nothing in trash", Toast.LENGTH_SHORT)
+                        .show()
+                }
+            }
         }
 
         return root
@@ -175,14 +223,13 @@ class HomeFragment : Fragment() {
 
     private fun finish() {
         Log.d(LOG_TAG, "STOP")
-        recorder?.stop()
-        recorder?.release()
+        releaseRecorder()
         timeWhenStopped = 0
         isPaused = false
         isRecording = false
-        recorder = null
     }
 
+    /* RECORDER FUNCTIONS START*/
     private fun onRecord() {
         when{
             isPaused -> resumeRecording()
@@ -191,44 +238,10 @@ class HomeFragment : Fragment() {
         }
     }
 
-    private fun pauseRecording(){
-        /* pause() requires Android 7 or higher(API 24) */
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            Log.d(LOG_TAG, "PAUSE")
-            try {
-                recorder?.pause()
-            } catch (e: IOException) {
-                Log.e(LOG_TAG, "pause() failed")
-            }
-        }
-
-        isPaused = true
-    }
-
-    private fun resumeRecording(){
-        /* resume() requires Android 7 or higher(API 24) */
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            Log.d(LOG_TAG, "RESUME")
-            try {
-                recorder?.resume()
-            } catch (e: IOException) {
-                Log.e(LOG_TAG, "resume() failed")
-            }
-        }
-        isPaused = false
-    }
-
-    private fun audioPlayer(fileName: File?) {
-        player = MediaPlayer().apply {
-            try {
-                setDataSource(fileName.toString())
-                prepare()
-                start()
-                Log.d(LOG_TAG, "PLAY")
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
+    private fun releaseRecorder() {
+        recorder?.stop()
+        recorder?.release()
+        recorder = null
     }
 
     private fun startRecording() {
@@ -293,6 +306,33 @@ class HomeFragment : Fragment() {
         isRecording = true
         isPaused = false
     }
+
+    private fun pauseRecording(){
+        /* pause() requires Android 7 or higher(API 24) */
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            Log.d(LOG_TAG, "PAUSE")
+            try {
+                recorder?.pause()
+            } catch (e: IOException) {
+                Log.e(LOG_TAG, "pause() failed")
+            }
+        }
+        isPaused = true
+    }
+
+    private fun resumeRecording(){
+        /* resume() requires Android 7 or higher(API 24) */
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            Log.d(LOG_TAG, "RESUME")
+            try {
+                recorder?.resume()
+            } catch (e: IOException) {
+                Log.e(LOG_TAG, "resume() failed")
+            }
+        }
+        isPaused = false
+    }
+    /* RECORDER FUNCTIONS END */
 
     // This property is only valid between onCreateView and
     // onDestroyView.
